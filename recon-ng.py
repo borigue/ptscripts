@@ -44,7 +44,7 @@ def main():
     group2.add_option('-k', metavar='"KEY WORDS"', help='additional search terms for company', default='', dest='key_words', type='string', action='store')
     group2.add_option('--jigsaw', help='enable Jigsaw module', dest='jigsaw', default=False, action='store_true')
     group2.add_option('--linkedin', help='enable LinkedIn module', dest='linkedin', default=False, action='store_true')
-    group2.add_option('--mutate', metavar="TYPE", help='mutate contacts to create usernames or email addresses', default='', dest='type', type='string', action='store')
+    group2.add_option('--mutate', metavar="TYPE", help='mutate contacts to create usernames or email addresses', default='', dest='mutate', type='string', action='store')
     parser.add_option_group(group1)
     parser.add_option_group(group2)
     (opts, args) = parser.parse_args()
@@ -73,9 +73,9 @@ def main():
         # display harvested contacts and write to file
         if contacts:
             contacts = list(set(contacts))
-            if opts.type: contacts = mutate_contacts(contacts, opts.type)
+            if opts.mutate: contacts = mutate_contacts(contacts, opts.mutate)
             print '[!] Total Contacts Harvested: %d' % len(contacts)
-            if opts.filename: append_contacts_to_outfile(contacts, opts.filename)
+            if opts.filename: append_to_outfile(contacts, opts.filename)
         else:
             print '[!] No Contacts Harvested!'
 
@@ -104,10 +104,10 @@ def main():
             s.verbose = verbose
             hosts.extend(s.get_subs_via_api())
         if hosts:
-            hosts = list(set(hosts))
+            hosts = list(set(['%s.%s' % (host, opts.domain) for host in hosts]))
             if opts.resolve: hosts = resolve_hosts(hosts, opts.domain)
             print '[!] Total Hosts Harvested: %d' % len(hosts)
-            if opts.filename: append_hosts_to_outfile(hosts, opts.domain, opts.filename)
+            if opts.filename: append_to_outfile(hosts, opts.filename)
         else:
             print '[!] No Hosts Harvested!'
 
@@ -604,38 +604,21 @@ def resolve_hosts(hosts, domain):
     new_hosts = []
     # create a list of all associated ips to the subdomain
     for host in hosts:
-        site = '%s.%s' % (host, domain)
         # dns query and dictionary assignment
-        try: ips = list(set([item[4][0] for item in socket.getaddrinfo(site, 80)]))
+        try: ips = list(set([item[4][0] for item in socket.getaddrinfo(host, 80)]))
         except socket.gaierror: ips = ['no entry']
         for ip in ips:
-            print '[Address] %s - %s' % (ip, site)
+            print '[Address] %s - %s' % (ip, host)
             new_hosts.append((host,ip))
     return new_hosts
 
-def append_hosts_to_outfile(hosts, domain, outfilename):
-    outfile = open(outfilename, 'a')
-    for host in hosts:
-        if len(host) < 2:
-            print '[Host] %s.%s' % (host, domain)
-            outfile.write('%s.%s\n' % (host, domain))
-        else:
-            print '[Host] %s.%s (%s)' % (host[0], domain, host[1])
-            outfile.write('%s.%s,%s\n' % (host[0], domain, host[1]))            
+def append_to_outfile(items, outfilename):
+    outfile = open(outfilename, 'ab')
+    import csv
+    csvwriter = csv.writer(outfile, quoting=csv.QUOTE_ALL)
+    csvwriter.writerows(items)
     outfile.close()
-    print '[!] %d Hosts Added to \'%s\'.' % (len(hosts), outfilename)
-
-def append_contacts_to_outfile(contacts, outfilename):
-    outfile = open(outfilename, 'a')
-    for contact in contacts:
-        if len(contact) < 4:
-            print '[Contact] %s %s - %s' % (contact[0], contact[1], contact[2])
-            outfile.write('"%s","%s","%s"\n' % (contact[0], contact[1], contact[2]))
-        else:
-            print '[Contact] %s %s (%s) - %s' % (contact[0], contact[1], contact[2], contact[3])
-            outfile.write('"%s","%s","%s","%s"\n' % (contact[0], contact[1], contact[2], contact[3]))
-    outfile.close()
-    print '[!] %d Contacts Added to \'%s\'.' % (len(contacts), outfilename)
+    print '[+] %d Items Added to \'%s\'.' % (len(items), outfilename)
 
 def get_key(key_name):
     import os
