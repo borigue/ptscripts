@@ -614,9 +614,13 @@ def resolve_hosts(hosts, domain):
 
 def append_to_outfile(items, outfilename):
     outfile = open(outfilename, 'ab')
-    import csv
-    csvwriter = csv.writer(outfile, quoting=csv.QUOTE_ALL)
-    csvwriter.writerows(items)
+    for item in items:
+        if type(item) == str:
+            outfile.write('%s\n' % (item))
+        else:
+            import csv
+            csvwriter = csv.writer(outfile, quoting=csv.QUOTE_ALL)
+            csvwriter.writerow(item)
     outfile.close()
     print '[+] %d Items Added to \'%s\'.' % (len(items), outfilename)
 
