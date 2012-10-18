@@ -1,5 +1,6 @@
 REM Volume Shadow Copy Management from CLI.
 REM Part of the presentation "Lurking in the Shadows" by Mark Baggett and Tim "LaNMaSteR53" Tomes.
+REM Co-developed by Mark Baggett (@MarkBaggett) and Tim Tomes (@lanmaster53).
 
 Set args = WScript.Arguments
 
