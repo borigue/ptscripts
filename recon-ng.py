@@ -1,6 +1,18 @@
 #!/usr/bin/python -tt
 
-import sys, re, time, random, json, urllib, urllib2, optparse, socket
+import sys
+import re
+import time
+import random
+import json
+import urllib
+import urllib2
+import optparse
+import socket
+import os
+import httplib2
+import urlparse
+import oauth2 as oauth
 
 print """
     _/_/_/    _/_/_/_/    _/_/_/    _/_/    _/      _/              _/      _/    _/_/_/   
@@ -44,6 +56,7 @@ def main():
     group2.add_option('-k', metavar='"key words"', help='additional search terms for company', default='', dest='key_words', type='string', action='store')
     group2.add_option('--jigsaw', help='enable Jigsaw module', dest='jigsaw', default=False, action='store_true')
     group2.add_option('--linkedin', help='enable LinkedIn module', dest='linkedin', default=False, action='store_true')
+    group2.add_option('--linkedin-auth', help='enable LinkedIn w/Authentication module', dest='linkedin_auth', default=False, action='store_true')
     group2.add_option('--mutate', metavar="type", help='mutate contacts to create usernames or email addresses', default='', dest='mutate', type='string', action='store')
     parser.add_option_group(group1)
     parser.add_option_group(group2)
@@ -70,6 +83,11 @@ def main():
             l = linkedin(opts.company, opts.key_words)
             l.verbose = verbose
             contacts.extend(l.get_contacts())
+        if opts.linkedin_auth or opts.all:
+            print '===== LinkedIn (Authenticated) ====='
+            la = linkedin_auth(opts.company, opts.key_words)
+            la.verbose = verbose
+            contacts.extend(la.get_contacts())
         # display harvested contacts and write to file
         if contacts:
             contacts = list(set(contacts))
@@ -139,6 +157,7 @@ class shodan(base_hosts):
         page = 1
         # loop until no results are returned
         while True:
+            new = False
             # build and send request
             request = urllib2.Request(url)
             request.add_header('User-Agent', self.user_agent)
@@ -162,7 +181,7 @@ class shodan(base_hosts):
                         print '[Host] %s.%s' % (sub, self.domain)
                         subs.append(sub)
                         new = True
-            break
+            #break # large results will exhaust API query pool. Use this to restrict to one page.
             if not new: break
             page += 1
             url = '%s?%s&page=%s' % (base_url, params, str(page))
@@ -491,6 +510,75 @@ class jigsaw(base_contacts):
             page_cnt += 1
         return all_contacts
 
+class linkedin_auth(base_contacts):
+
+    def __init__(self, company, key_words=''):
+        base_contacts.__init__(self, company, key_words)
+        consumer_key = get_key('linkedin_key', 'LinkedIn API Key')
+        consumer_secret = get_key('linkedin_secret', 'LinkedIn Secret Key')
+        if not consumer_key or not consumer_secret: print '[!] Warning. Blank keys will result in inaccurate data.'
+        # Use API key and secret to instantiate consumer object
+        self.consumer = oauth.Consumer(consumer_key, consumer_secret)
+        self.access_token = {'oauth_token': get_token('linkedin_token'),'oauth_token_secret': get_token('linkedin_token_secret')}
+        if not self.access_token['oauth_token']: self.get_access_tokens()
+
+    def get_access_tokens(self):
+        client = oauth.Client(self.consumer)
+        request_token_url = 'https://api.linkedin.com/uas/oauth/requestToken'
+        resp, content = client.request(request_token_url, "POST")
+        if resp['status'] != '200':
+            raise Exception("[!] Error: Invalid Response %s." % resp['status'])
+        request_token = dict(urlparse.parse_qsl(content))
+        authorize_url = 'https://api.linkedin.com/uas/oauth/authorize'
+        print "Go to the following link in your browser and enter the pin below:"
+        print "%s?oauth_token=%s" % (authorize_url, request_token['oauth_token'])
+        oauth_verifier = raw_input('Enter PIN: ')
+        access_token_url = 'https://api.linkedin.com/uas/oauth/accessToken'
+        token = oauth.Token(request_token['oauth_token'], request_token['oauth_token_secret'])
+        token.set_verifier(oauth_verifier)
+        client = oauth.Client(self.consumer, token)
+        resp, content = client.request(access_token_url, "POST")
+        self.access_token = dict(urlparse.parse_qsl(content))
+        add_token('linkedin_token', self.access_token['oauth_token'])
+        add_token('linkedin_token_secret', self.access_token['oauth_token_secret'])
+    
+    def get_contacts(self):
+        print '[-] Searching LinkedIn (Authenticated) for Employees of \'%s\'...' % self.company
+        # Use developer token and secret to instantiate access token object
+        contacts = []
+        token = oauth.Token(key=get_key('linkedin_token'), secret=get_key('linkedin_token_secret'))
+        client = oauth.Client(self.consumer, token)
+        count = 25
+        base_url = "http://api.linkedin.com/v1/people-search:(people:(id,first-name,last-name,headline))?format=json&company-name=%s&current-company=true&count=%d" % (urllib.quote_plus(self.company), count)
+        url = base_url
+        page = 1
+        while True:
+            # Make call to LinkedIn to retrieve your own profile
+            resp,content = client.request(url)
+            if resp['status'] == '401':
+                print '[!] Access Token Needed or Expired.'
+                self.get_access_tokens()
+                contacts = self.get_contacts()
+                break
+            try: jsonobj = json.loads(content)
+            except ValueError as e:
+                print '[!] Error: %s in %s' % (e, url)
+                continue
+            if not 'values' in jsonobj['people']: break
+            for contact in jsonobj['people']['values']:
+                if 'headline' in contact:
+                    title = sanitize(contact['headline'])
+                    fname = sanitize(unescape(re.split('[\s]',contact['firstName'])[0]))
+                    lname = sanitize(unescape(re.split('[,;]',contact['lastName'])[0]))
+                    print '[Contact] %s %s - %s' % (fname, lname, title)
+                    contacts.append((fname, lname, title))
+            if not '_start' in jsonobj['people']: break
+            if jsonobj['people']['_start'] + jsonobj['people']['_count'] == jsonobj['people']['_total']: break
+            start = page * jsonobj['people']['_count']
+            url = '%s&start=%d' % (base_url, start)
+            page += 1
+        return contacts
+
 class linkedin(base_contacts):
 
     def __init__(self, company, key_words=''):
@@ -502,36 +590,38 @@ class linkedin(base_contacts):
         base_url = 'https://www.google.com/search?'
         pattern = '<a\shref="(\S+?)"\sclass=l'
         contacts = []
-        base_query = 'site:www.linkedin.com'
-        full_query = '%s "%s" %s' % (base_query, self.company, self.key_words)
-        if self.verbose: print '[Query] %s' % full_query
-        page = 0
-        nr = 10
-        while True:
-            content = ''
-            query = urllib.urlencode({'q':full_query, 'start':page*nr})
-            url = '%s%s' % (base_url, query)
-            if self.verbose: print '[URL] %s' % (url)
-            request = urllib2.Request(url)
-            request.add_header('User-agent', self.user_agent)
-            requestor = urllib2.build_opener()
-            try: response = requestor.open(request)
-            except KeyboardInterrupt: break
-            except Exception as e:
-                if self.verbose: print '[!] Error: %s.' % (e)
-                break
-            content = response.read()
-            results = re.findall(pattern, content)
-            for result in results:
-                if self.verbose: print '[Result] %s' % result
-                try: contact = self.validate_employment(result)
+        #base_queries = ['site:www.linkedin.com']
+        base_queries = ['site:www.linkedin.com/in','site:www.linkedin.com/pub']
+        for base_query in base_queries:
+            full_query = '%s "%s" %s' % (base_query, self.company, self.key_words)
+            if self.verbose: print '[Query] %s' % full_query
+            page = 0
+            nr = 10
+            while True:
+                content = ''
+                query = urllib.urlencode({'q':full_query, 'start':page*nr})
+                url = '%s%s' % (base_url, query)
+                if self.verbose: print '[URL] %s' % (url)
+                request = urllib2.Request(url)
+                request.add_header('User-agent', self.user_agent)
+                requestor = urllib2.build_opener()
+                try: response = requestor.open(request)
                 except KeyboardInterrupt: return contacts
-                if contact: contacts.append(contact)
-            if not '>Next</span>' in content: break
-            page += 1
-            if self.verbose: print '[-] Sleeping to Avoid Lock-out...'
-            try: time.sleep(random.randint(5,15))
-            except KeyboardInterrupt: break
+                except Exception as e:
+                    print '[!] Error: %s.' % (e)
+                    continue
+                content = response.read()
+                results = re.findall(pattern, content)
+                for result in results:
+                    if self.verbose: print '[Result] %s' % result
+                    try: contact = self.validate_employment(result)
+                    except KeyboardInterrupt: return contacts
+                    if contact: contacts.append(contact)
+                if not '>Next</span>' in content: break
+                page += 1
+                if self.verbose: print '[-] Sleeping to Avoid Lock-out...'
+                try: time.sleep(random.randint(5,15))
+                except KeyboardInterrupt: return contacts
         return contacts
 
     def validate_employment(self, link):
@@ -541,13 +631,13 @@ class linkedin(base_contacts):
         contact, fname, lname, title = None, None, None, None
         try: content = urllib.urlopen(url).read().split('\n')
         except IOError as e:
-            if self.verbose: print '[!] Error: %s' % (e)
+            print '[!] Error: %s' % (e)
         for line in content:
             # get the first and last names
             if 'class="full-name"' in line:
                 m = re.search('given-name">(.+?)<.+family-name">(.+?)<', line)
-                fname = unescape(m.group(1))
-                lname = unescape(m.group(2))
+                fname = sanitize(unescape(re.split('[\s]',m.group(1))[0]))
+                lname = sanitize(unescape(re.split('[,;]',m.group(2))[0]))
             # get current job title
             elif 'headline-title title' in line:
                 job = unescape(content[i+1])
@@ -556,6 +646,7 @@ class linkedin(base_contacts):
                     title = job.strip()
             if fname and lname and title:
                 contact = (fname, lname, title)
+                #print '[Profile] %s' % link
                 print '[Contact] %s %s - %s' % (fname, lname, title)
                 break
             i += 1
@@ -615,7 +706,7 @@ def resolve_hosts(hosts, domain):
 def append_to_outfile(items, outfilename):
     outfile = open(outfilename, 'ab')
     for item in items:
-        if type(item) == str:
+        if type(item) == str or type(item) == unicode:
             outfile.write('%s\n' % (item))
         else:
             import csv
@@ -624,15 +715,14 @@ def append_to_outfile(items, outfilename):
     outfile.close()
     print '[+] %d Items Added to \'%s\'.' % (len(items), outfilename)
 
-def get_key(key_name):
-    import os
+def get_key(key_name, key_text='API Key'):
     keyfile = 'api.keys'
     if os.path.exists(keyfile):
         for line in open(keyfile):
             key, value = line.split('::')[0], line.split('::')[1]
             if key == key_name:
                 return value.strip()
-    try: key = raw_input("Enter API Key (blank to skip): ")
+    try: key = raw_input("Enter %s (blank to skip): " % (key_text))
     except KeyboardInterrupt: return ''
     if key:
         file = open(keyfile, 'a')
@@ -640,12 +730,39 @@ def get_key(key_name):
         file.close()
     return key
 
+def get_token(key_name):
+    keyfile = 'api.keys'
+    if os.path.exists(keyfile):
+        for line in open(keyfile):
+            key, value = line.split('::')[0], line.split('::')[1]
+            if key == key_name:
+                return value.strip()
+    return ''
+
+def add_token(key_name, key_value):
+    keys = []
+    keyfile = 'api.keys'
+    if os.path.exists(keyfile):
+        # remove the old key if duplicate
+        for line in open(keyfile):
+            key = line.split('::')[0]
+            if key != key_name:
+                keys.append(line)
+    keys = ''.join(keys)
+    file = open(keyfile, 'w')
+    file.write(keys)
+    file.write('%s::%s\n' % (key_name, key_value))
+    file.close()
+
 def unescape(s):
     import htmllib
     p = htmllib.HTMLParser(None)
     p.save_bgn()
     p.feed(s)
     return p.save_end()
+
+def sanitize(item):
+    return ''.join([char for char in item if ord(char) >= 32 and ord(char) <= 126])
 
 #=================================================
 # START
