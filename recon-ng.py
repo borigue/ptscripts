@@ -593,7 +593,7 @@ class linkedin(base_contacts):
         #base_queries = ['site:www.linkedin.com']
         base_queries = ['site:www.linkedin.com/in','site:www.linkedin.com/pub']
         for base_query in base_queries:
-            full_query = '%s "%s" %s' % (base_query, self.company, self.key_words)
+            full_query = '%s "at %s" %s' % (base_query, self.company, self.key_words)
             if self.verbose: print '[Query] %s' % full_query
             page = 0
             nr = 10
