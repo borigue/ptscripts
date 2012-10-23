@@ -12,6 +12,7 @@ import socket
 import os
 import httplib2
 import urlparse
+import webbrowser
 import oauth2 as oauth
 
 print """
@@ -519,12 +520,14 @@ class linkedin_auth(base_contacts):
     def __init__(self, company, key_words=''):
         base_contacts.__init__(self, company, key_words)
         consumer_key = get_key('linkedin_key', 'LinkedIn API Key')
-        consumer_secret = get_key('linkedin_secret', 'LinkedIn Secret Key')
-        if not consumer_key or not consumer_secret: print '[!] Warning. Blank keys will result in inaccurate data.'
+        if not consumer_key: return
+        consumer_secret = get_key('linkedin_secret', 'LinkedIn Secret Key') 
+        if not consumer_secret: return
         # Use API key and secret to instantiate consumer object
         self.consumer = oauth.Consumer(consumer_key, consumer_secret)
         self.access_token = {'oauth_token': get_token('linkedin_token'),'oauth_token_secret': get_token('linkedin_token_secret')}
-        if not self.access_token['oauth_token']: self.get_access_tokens()
+        if not self.access_token['oauth_token']: self.access_token = self.get_access_tokens()
+        if not self.access_token: del self.access_token
 
     def get_access_tokens(self):
         client = oauth.Client(self.consumer)
@@ -533,10 +536,14 @@ class linkedin_auth(base_contacts):
         if resp['status'] != '200':
             raise Exception("[!] Error: Invalid Response %s." % resp['status'])
         request_token = dict(urlparse.parse_qsl(content))
-        authorize_url = 'https://api.linkedin.com/uas/oauth/authorize'
-        print "Go to the following link in your browser and enter the pin below:"
-        print "%s?oauth_token=%s" % (authorize_url, request_token['oauth_token'])
-        oauth_verifier = raw_input('Enter PIN: ')
+        base_authorize_url = 'https://api.linkedin.com/uas/oauth/authorize'
+        authorize_url = "%s?oauth_token=%s" % (base_authorize_url, request_token['oauth_token'])
+        print "Go to the following link in your browser and enter the pin below:" 
+        print authorize_url
+        w = webbrowser.get()
+        w.open(authorize_url)
+        try: oauth_verifier = raw_input('Enter PIN: ')
+        except KeyboardInterrupt: return None
         access_token_url = 'https://api.linkedin.com/uas/oauth/accessToken'
         token = oauth.Token(request_token['oauth_token'], request_token['oauth_token_secret'])
         token.set_verifier(oauth_verifier)
@@ -545,12 +552,14 @@ class linkedin_auth(base_contacts):
         self.access_token = dict(urlparse.parse_qsl(content))
         add_token('linkedin_token', self.access_token['oauth_token'])
         add_token('linkedin_token_secret', self.access_token['oauth_token_secret'])
+        return self.access_token
     
     def get_contacts(self):
+        contacts = []
+        if not hasattr(self, 'access_token'): return contacts
         print '[-] Searching LinkedIn (Authenticated) for Employees of \'%s\'...' % self.company
         # Use developer token and secret to instantiate access token object
-        contacts = []
-        token = oauth.Token(key=get_key('linkedin_token'), secret=get_key('linkedin_token_secret'))
+        token = oauth.Token(key=self.access_token['oauth_token'], secret=self.access_token['oauth_token_secret'])
         client = oauth.Client(self.consumer, token)
         count = 25
         base_url = "http://api.linkedin.com/v1/people-search:(people:(id,first-name,last-name,headline))?format=json&company-name=%s&current-company=true&count=%d" % (urllib.quote_plus(self.company), count)
