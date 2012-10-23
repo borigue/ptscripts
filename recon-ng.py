@@ -327,7 +327,7 @@ class bxfr(base_hosts):
                     break
                 else:
                     page += 1
-                    if self.verbose: print '[-] No New Subdomains Found on the Current Page. Jumping to Result %d.' % (page*nr)+1
+                    if self.verbose: print '[-] No New Subdomains Found on the Current Page. Jumping to Result %d.' % ((page*nr)+1)
                     new = True
             # sleep script to avoid lock-out
             if self.verbose: print '[-] Sleeping to Avoid Lock-out...'
@@ -348,6 +348,7 @@ class yxfr(base_hosts):
         base_uri = '/search?'
         base_query = 'site:' + self.domain
         pattern = 'url>(?:<b>)*(\S+?)\.(?:<b>)*%s</b>' % (self.domain)
+        #pattern = '\*\*http%%3a//(\S*)\.%s/' % (self.domain)
         subs = []
         # control variables
         new = True
@@ -385,6 +386,9 @@ class yxfr(base_hosts):
             new = False
             # add subdomain to list if not already exists
             for site in sites:
+                # remove left over bold tags remaining after regex
+                site = site.replace('<b>', '')
+                site = site.replace('</b>', '')
                 if site not in subs:
                     print '[Host] %s.%s' % (site, self.domain)
                     subs.append(site)
@@ -398,7 +402,7 @@ class yxfr(base_hosts):
                     break
                 else:
                     page += 1
-                    if self.verbose: print '[-] No New Subdomains Found on the Current Page. Jumping to Result %d.' % (page*nr)+1
+                    if self.verbose: print '[-] No New Subdomains Found on the Current Page. Jumping to Result %d.' % ((page*nr)+1)
                     new = True
             # sleep script to avoid lock-out
             if self.verbose: print '[-] Sleeping to Avoid Lock-out...'
