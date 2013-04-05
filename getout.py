@@ -29,6 +29,8 @@ def main():
 
     if '-' in opts.ports:
         ports = range(int(opts.ports.split('-')[0]), int(opts.ports.split('-')[1])+1)
+    elif ',' in opts.ports:
+        ports = [int(x) for x in opts.ports.split(',')]
     else:
         ports = [int(opts.ports)]
 
